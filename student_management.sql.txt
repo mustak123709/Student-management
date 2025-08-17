@@ -1,0 +1,350 @@
+-- ============================================
+-- Project: Student Management System (SQL)
+-- DB: MySQL 8+
+-- Single-file script (create DB -> schema -> seed -> routines -> views -> triggers -> demo queries)
+-- ============================================
+
+-- -------------------------
+-- 0) Clean & Create DB
+-- -------------------------
+DROP DATABASE IF EXISTS StudentManagement;
+CREATE DATABASE StudentManagement
+  CHARACTER SET utf8mb4
+  COLLATE utf8mb4_unicode_ci;
+USE StudentManagement;
+
+-- -------------------------
+-- 1) Tables
+-- -------------------------
+
+-- Students
+CREATE TABLE Students (
+    student_id INT PRIMARY KEY AUTO_INCREMENT,
+    first_name  VARCHAR(50)      NOT NULL,
+    last_name   VARCHAR(50)      NOT NULL,
+    dob         DATE             NOT NULL,
+    email       VARCHAR(100)     NOT NULL,
+    phone       VARCHAR(20),
+    created_at  TIMESTAMP        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT uq_students_email UNIQUE (email),
+    CONSTRAINT chk_students_dob CHECK (dob <= CURRENT_DATE)
+) ENGINE=InnoDB;
+
+-- Courses
+CREATE TABLE Courses (
+    course_id   INT PRIMARY KEY AUTO_INCREMENT,
+    course_code VARCHAR(20)      NOT NULL,
+    course_name VARCHAR(100)     NOT NULL,
+    credits     INT              NOT NULL,
+    is_active   TINYINT(1)       NOT NULL DEFAULT 1,
+    created_at  TIMESTAMP        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT uq_courses_code UNIQUE (course_code),
+    CONSTRAINT chk_courses_credits CHECK (credits > 0 AND credits <= 10)
+) ENGINE=InnoDB;
+
+-- Instructors (optional but useful)
+CREATE TABLE Instructors (
+    instructor_id INT PRIMARY KEY AUTO_INCREMENT,
+    first_name    VARCHAR(50) NOT NULL,
+    last_name     VARCHAR(50) NOT NULL,
+    email         VARCHAR(100) NOT NULL,
+    hire_date     DATE NOT NULL,
+    CONSTRAINT uq_instructors_email UNIQUE (email)
+) ENGINE=InnoDB;
+
+-- Sections (course offerings taught by an instructor)
+CREATE TABLE Sections (
+    section_id    INT PRIMARY KEY AUTO_INCREMENT,
+    course_id     INT NOT NULL,
+    instructor_id INT NOT NULL,
+    term          ENUM('SPRING','SUMMER','FALL','WINTER') NOT NULL,
+    term_year     YEAR NOT NULL,
+    capacity      INT NOT NULL DEFAULT 40,
+    created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (course_id) REFERENCES Courses(course_id),
+    FOREIGN KEY (instructor_id) REFERENCES Instructors(instructor_id),
+    CONSTRAINT chk_sections_capacity CHECK (capacity > 0)
+) ENGINE=InnoDB;
+
+-- Enrollments (student <-> section)
+CREATE TABLE Enrollments (
+    enrollment_id   INT PRIMARY KEY AUTO_INCREMENT,
+    student_id      INT NOT NULL,
+    section_id      INT NOT NULL,
+    enrollment_date DATE NOT NULL DEFAULT (CURRENT_DATE),
+    status          ENUM('ENROLLED','DROPPED','COMPLETED') NOT NULL DEFAULT 'ENROLLED',
+    UNIQUE KEY uq_student_section (student_id, section_id),
+    FOREIGN KEY (student_id) REFERENCES Students(student_id) ON DELETE CASCADE,
+    FOREIGN KEY (section_id) REFERENCES Sections(section_id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- Grades
+CREATE TABLE Grades (
+    grade_id      INT PRIMARY KEY AUTO_INCREMENT,
+    enrollment_id INT NOT NULL,
+    grade         ENUM('A','B','C','D','F','I') NOT NULL, -- I = Incomplete
+    graded_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (enrollment_id) REFERENCES Enrollments(enrollment_id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- -------------------------
+-- 2) Helpful Indexes
+-- -------------------------
+CREATE INDEX idx_students_last_first ON Students(last_name, first_name);
+CREATE INDEX idx_courses_name ON Courses(course_name);
+CREATE INDEX idx_enrollments_student ON Enrollments(student_id);
+CREATE INDEX idx_enrollments_section ON Enrollments(section_id);
+
+-- -------------------------
+-- 3) Seed Data
+-- -------------------------
+START TRANSACTION;
+
+-- Students
+INSERT INTO Students (first_name, last_name, dob, email, phone) VALUES
+('Shaik','Musthakheen','2003-09-10','musthakheen@example.com','9876543210'),
+('Ayesha','Fatima','2002-05-14','ayesha@example.com','9876543211'),
+('Rahul','Sharma','2001-11-23','rahul@example.com','9876543212'),
+('Priya','Verma','2002-02-02','priya@example.com','9876543213'),
+('Arjun','Reddy','2003-08-18','arjun@example.com','9876543214');
+
+-- Instructors
+INSERT INTO Instructors (first_name,last_name,email,hire_date) VALUES
+('Neha','Mehta','neha.mehta@univ.edu','2018-07-01'),
+('Kiran','Patel','kiran.patel@univ.edu','2016-01-15');
+
+-- Courses
+INSERT INTO Courses (course_code, course_name, credits) VALUES
+('DBMS101','Database Management Systems',4),
+('ML201','Machine Learning',3),
+('OS110','Operating Systems',3),
+('DSA120','Data Structures & Algorithms',4);
+
+-- Sections (offerings)
+INSERT INTO Sections (course_id, instructor_id, term, term_year, capacity) VALUES
+(1,1,'FALL',2025,60),
+(2,2,'FALL',2025,40),
+(3,1,'FALL',2025,50),
+(4,2,'FALL',2025,50);
+
+-- Enrollments
+INSERT INTO Enrollments (student_id, section_id, status) VALUES
+(1,1,'ENROLLED'),
+(1,2,'ENROLLED'),
+(2,1,'ENROLLED'),
+(3,3,'ENROLLED'),
+(4,4,'ENROLLED'),
+(5,1,'ENROLLED');
+
+-- Grades
+INSERT INTO Grades (enrollment_id, grade) VALUES
+(1,'A'),
+(2,'B'),
+(3,'A'),
+(4,'C');
+
+COMMIT;
+
+-- -------------------------
+-- 4) Views
+-- -------------------------
+CREATE OR REPLACE VIEW v_student_courses AS
+SELECT
+    s.student_id,
+    s.first_name AS student_first_name,
+    s.last_name  AS student_last_name,
+    c.course_code,
+    c.course_name,
+    sec.term,
+    sec.term_year,
+    g.grade
+FROM Students s
+JOIN Enrollments e  ON e.student_id = s.student_id
+JOIN Sections   sec ON sec.section_id = e.section_id
+JOIN Courses    c   ON c.course_id = sec.course_id
+LEFT JOIN Grades g  ON g.enrollment_id = e.enrollment_id;
+
+CREATE OR REPLACE VIEW v_course_roster AS
+SELECT
+    c.course_code,
+    c.course_name,
+    sec.term,
+    sec.term_year,
+    i.first_name AS instructor_first_name,
+    i.last_name  AS instructor_last_name,
+    s.student_id,
+    CONCAT(s.first_name,' ',s.last_name) AS student_full_name,
+    e.status
+FROM Sections sec
+JOIN Courses c      ON c.course_id = sec.course_id
+JOIN Instructors i  ON i.instructor_id = sec.instructor_id
+LEFT JOIN Enrollments e ON e.section_id = sec.section_id
+LEFT JOIN Students s    ON s.student_id = e.student_id;
+
+-- -------------------------
+-- 5) Stored Functions & Procedures
+-- -------------------------
+
+-- GPA helper: map letter to points
+DELIMITER //
+CREATE OR REPLACE FUNCTION fn_grade_points(letter ENUM('A','B','C','D','F','I'))
+RETURNS DECIMAL(3,2)
+DETERMINISTIC
+BEGIN
+    RETURN CASE letter
+        WHEN 'A' THEN 4.00
+        WHEN 'B' THEN 3.00
+        WHEN 'C' THEN 2.00
+        WHEN 'D' THEN 1.00
+        WHEN 'F' THEN 0.00
+        ELSE NULL
+    END;
+END//
+DELIMITER ;
+
+-- Get a student's transcript (courses + grades)
+DELIMITER //
+CREATE OR REPLACE PROCEDURE sp_get_student_transcript(IN p_student_id INT)
+BEGIN
+    SELECT
+        s.student_id,
+        s.first_name,
+        s.last_name,
+        c.course_code,
+        c.course_name,
+        sec.term,
+        sec.term_year,
+        g.grade,
+        fn_grade_points(g.grade) AS grade_points
+    FROM Students s
+    JOIN Enrollments e  ON e.student_id = s.student_id
+    JOIN Sections   sec ON sec.section_id = e.section_id
+    JOIN Courses    c   ON c.course_id = sec.course_id
+    LEFT JOIN Grades g  ON g.enrollment_id = e.enrollment_id
+    WHERE s.student_id = p_student_id
+    ORDER BY sec.term_year DESC, FIELD(sec.term,'WINTER','SPRING','SUMMER','FALL');
+END//
+DELIMITER ;
+
+-- Calculate GPA for a student (weighted by course credits)
+DELIMITER //
+CREATE OR REPLACE PROCEDURE sp_get_student_gpa(IN p_student_id INT)
+BEGIN
+    SELECT
+        s.student_id,
+        CONCAT(s.first_name,' ',s.last_name) AS student_name,
+        ROUND(
+            SUM(fn_grade_points(g.grade) * c.credits) / NULLIF(SUM(c.credits),0)
+        , 2) AS gpa
+    FROM Students s
+    JOIN Enrollments e  ON e.student_id = s.student_id
+    JOIN Sections   sec ON sec.section_id = e.section_id
+    JOIN Courses    c   ON c.course_id = sec.course_id
+    JOIN Grades     g   ON g.enrollment_id = e.enrollment_id
+    WHERE s.student_id = p_student_id
+      AND g.grade IN ('A','B','C','D','F')
+    GROUP BY s.student_id, student_name;
+END//
+DELIMITER ;
+
+-- Enroll a student safely (capacity + duplicate checks)
+DELIMITER //
+CREATE OR REPLACE PROCEDURE sp_enroll_student(
+    IN p_student_id INT,
+    IN p_section_id INT
+)
+BEGIN
+    DECLARE v_capacity INT;
+    DECLARE v_current  INT;
+
+    -- prevent duplicate enrollment (unique key also protects)
+    IF EXISTS (SELECT 1 FROM Enrollments WHERE student_id = p_student_id AND section_id = p_section_id) THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Student already enrolled in this section';
+    END IF;
+
+    -- capacity check
+    SELECT capacity INTO v_capacity FROM Sections WHERE section_id = p_section_id;
+    SELECT COUNT(*) INTO v_current FROM Enrollments WHERE section_id = p_section_id AND status = 'ENROLLED';
+
+    IF v_current >= v_capacity THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Section is full';
+    END IF;
+
+    INSERT INTO Enrollments (student_id, section_id, status) VALUES (p_student_id, p_section_id, 'ENROLLED');
+END//
+DELIMITER ;
+
+-- -------------------------
+-- 6) Triggers
+-- -------------------------
+
+-- Validate student DOB (extra safety beyond CHECK)
+DELIMITER //
+CREATE TRIGGER trg_students_before_insert
+BEFORE INSERT ON Students
+FOR EACH ROW
+BEGIN
+    IF NEW.dob > CURRENT_DATE THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Date of Birth cannot be in the future';
+    END IF;
+END//
+DELIMITER ;
+
+-- Keep Grades consistent: only one latest grade per enrollment (optional rule)
+DELIMITER //
+CREATE TRIGGER trg_grades_before_insert
+BEFORE INSERT ON Grades
+FOR EACH ROW
+BEGIN
+    -- if a grade already exists, we allow multiple but you can enforce single by uncommenting:
+    -- IF EXISTS (SELECT 1 FROM Grades WHERE enrollment_id = NEW.enrollment_id) THEN
+    --     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Grade already recorded for this enrollment';
+    -- END IF;
+    IF NEW.grade IS NULL THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Grade cannot be NULL';
+    END IF;
+END//
+DELIMITER ;
+
+-- -------------------------
+-- 7) Demo Queries (you can remove these in prod)
+-- -------------------------
+
+-- All students with their sections, courses, and latest grade (if any)
+SELECT s.student_id, s.first_name, s.last_name,
+       c.course_code, c.course_name, sec.term, sec.term_year,
+       (SELECT g2.grade
+        FROM Grades g2
+        WHERE g2.enrollment_id = e.enrollment_id
+        ORDER BY g2.graded_at DESC
+        LIMIT 1) AS latest_grade
+FROM Students s
+JOIN Enrollments e  ON e.student_id = s.student_id
+JOIN Sections   sec ON sec.section_id = e.section_id
+JOIN Courses    c   ON c.course_id = sec.course_id
+ORDER BY s.last_name, s.first_name;
+
+-- Count students per course (current term/year)
+SELECT c.course_code, c.course_name, sec.term, sec.term_year,
+       COUNT(e.student_id) AS total_students
+FROM Sections sec
+JOIN Courses c ON c.course_id = sec.course_id
+LEFT JOIN Enrollments e ON e.section_id = sec.section_id AND e.status = 'ENROLLED'
+GROUP BY c.course_code, c.course_name, sec.term, sec.term_year
+ORDER BY total_students DESC;
+
+-- Students who scored 'A'
+SELECT s.student_id, s.first_name, s.last_name, c.course_code, c.course_name
+FROM Students s
+JOIN Enrollments e ON e.student_id = s.student_id
+JOIN Sections sec  ON sec.section_id = e.section_id
+JOIN Courses c     ON c.course_id = sec.course_id
+JOIN Grades g      ON g.enrollment_id = e.enrollment_id
+WHERE g.grade = 'A';
+
+-- Use the procedures (uncomment to run)
+-- CALL sp_get_student_transcript(1);
+-- CALL sp_get_student_gpa(1);
+-- CALL sp_enroll_student(5, 2); -- example: enroll Arjun into ML section if capacity allows
